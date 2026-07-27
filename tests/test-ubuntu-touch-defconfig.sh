@@ -22,6 +22,9 @@ case "$(basename "$0"):${1:-}" in
 	clang:--version)
 		echo 'clang version 22.0.0 (test double)'
 		;;
+	depmod:-b)
+		printf 'test.ko:\n' >"$2/lib/modules/$3/modules.dep"
+		;;
 esac
 EOF
 chmod +x "$fake_bin/fake-tool"
@@ -29,7 +32,7 @@ chmod +x "$fake_bin/fake-tool"
 for tool in \
 	clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump \
 	llvm-readelf llvm-size llvm-strip aarch64-linux-gnu-elfedit \
-	arm-linux-gnueabi-ld; do
+	arm-linux-gnueabi-ld depmod; do
 	ln -s fake-tool "$fake_bin/$tool"
 done
 
@@ -51,9 +54,31 @@ case " $* " in
 		cp "$FAKE_DEFCONFIG" "$output/.config"
 		;;
 	*' Image.gz-dtb '*)
-		mkdir -p "$output/arch/arm64/boot"
-		printf 'test Image.gz-dtb\n' >"$output/arch/arm64/boot/Image.gz-dtb"
+		mkdir -p "$output/arch/arm64/boot/dts/18621" \
+			"$output/arch/arm64/boot/dts/19651" \
+			"$output/arch/arm64/boot/dts/18097" \
+			"$output/arch/arm64/boot/dts/19601" \
+			"$output/arch/arm64/boot/dts/qcom"
+		printf 'gzip-kernel-payload' >"$output/arch/arm64/boot/Image.gz-dtb"
+		for dtb in \
+			18621/sdm710.dtb 19651/sdm710.dtb 18097/sdm710.dtb \
+			18097/sdm670.dtb 19601/sdm710.dtb qcom/sdm710.dtb; do
+			printf '\320\015\376\355\000\000\000\010' >"$output/arch/arm64/boot/dts/$dtb"
+			cat "$output/arch/arm64/boot/dts/$dtb" >>"$output/arch/arm64/boot/Image.gz-dtb"
+		done
 		printf 'clang version 22.0.0\n' >"$output/vmlinux"
+		;;
+	*' modules_install '*)
+		staging=''
+		for arg in "$@"; do
+			case "$arg" in INSTALL_MOD_PATH=*) staging="${arg#INSTALL_MOD_PATH=}" ;; esac
+		done
+		release='4.9.337+67-RMX1901-Halium-test'
+		mkdir -p "$staging/lib/modules/$release"
+		for module in br_netfilter rdbg mpq-adapter mpq-dmx-hw-plugin lcd llcc_perfmon; do
+			: >"$staging/lib/modules/$release/$module.ko"
+		done
+		: >"$staging/lib/modules/$release/modules.dep"
 		;;
 	*' kernelrelease '*)
 		echo '4.9.337+67-RMX1901-Halium-test'
@@ -66,6 +91,7 @@ test "$(grep -Fxc 'CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y' "$defconfig")" -eq 1
 test "$(grep -Fxc '# CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE is not set' "$defconfig")" -eq 0
 test "$(grep -Fxc 'CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="18621/sdm710 19651/sdm710 18097/sdm710 18097/sdm670 19601/sdm710 qcom/sdm710"' "$defconfig")" -eq 1
 test "$(grep -Fxc 'CONFIG_LOCALVERSION="-RMX1901-Halium"' "$defconfig")" -eq 1
+test "$(grep -Fxc 'CONFIG_BRIDGE_NETFILTER=m' "$defconfig")" -eq 1
 test "$(grep -Fxc 'CONFIG_USB_CONFIGFS_RNDIS=y' "$defconfig")" -eq 1
 test "$(grep -Fxc 'CONFIG_SERIAL_MSM_GENI_CONSOLE=y' "$defconfig")" -eq 1
 
@@ -95,6 +121,8 @@ PATH="$fake_bin:$PATH" \
 
 test -s "$build_output/arch/arm64/boot/Image.gz-dtb"
 grep -Fq ' Image.gz-dtb' "$make_log"
+grep -Fq ' Image.gz-dtb modules' "$make_log"
+grep -Fq ' modules_install' "$make_log"
 if grep -Eq '(^| )Image\.gz($| )' "$make_log"; then
 	echo 'build helper requested plain Image.gz instead of Image.gz-dtb' >&2
 	exit 1
