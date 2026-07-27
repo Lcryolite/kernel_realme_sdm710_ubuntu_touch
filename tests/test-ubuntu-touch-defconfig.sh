@@ -56,7 +56,7 @@ case " $* " in
 		printf 'clang version 22.0.0\n' >"$output/vmlinux"
 		;;
 	*' kernelrelease '*)
-		echo '4.14.0-RMX1901-Halium-test'
+		echo '4.9.337+67-RMX1901-Halium-test'
 		;;
 esac
 EOF
@@ -68,6 +68,24 @@ test "$(grep -Fxc 'CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES="18621/sdm710 196
 test "$(grep -Fxc 'CONFIG_LOCALVERSION="-RMX1901-Halium"' "$defconfig")" -eq 1
 test "$(grep -Fxc 'CONFIG_USB_CONFIGFS_RNDIS=y' "$defconfig")" -eq 1
 test "$(grep -Fxc 'CONFIG_SERIAL_MSM_GENI_CONSOLE=y' "$defconfig")" -eq 1
+
+# Ubuntu 24.04 systemd 255 baseline and Halium/LXC container primitives.
+for required_config in \
+	CONFIG_FHANDLE=y \
+	CONFIG_SYSVIPC=y \
+	CONFIG_POSIX_MQUEUE=y \
+	CONFIG_IPC_NS=y \
+	CONFIG_PID_NS=y \
+	CONFIG_CGROUP_PIDS=y \
+	CONFIG_CGROUP_DEVICE=y \
+	CONFIG_DEVTMPFS_MOUNT=y \
+	CONFIG_AUTOFS4_FS=y \
+	CONFIG_FANOTIFY=y; do
+	test "$(grep -Fxc "$required_config" "$defconfig")" -eq 1 || {
+		echo "missing Ubuntu Touch kernel capability: $required_config" >&2
+		exit 1
+	}
+done
 
 PATH="$fake_bin:$PATH" \
 	OUT_DIR="$build_output" \
@@ -82,7 +100,7 @@ if grep -Eq '(^| )Image\.gz($| )' "$make_log"; then
 	exit 1
 fi
 
-if git -C "$repo_root" grep -niE 'resukisu|sukisu' -- ':!tests/test-ubuntu-touch-defconfig.sh'; then
+if git -C "$repo_root" grep -niE 'resukisu|sukisu|kernelsu|magisk' -- ':!tests/test-ubuntu-touch-defconfig.sh'; then
   echo 'forbidden root framework marker in Ubuntu Touch kernel tree' >&2
   exit 1
 fi
