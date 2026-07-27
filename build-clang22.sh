@@ -59,12 +59,12 @@ echo "Output: ${build_output}"
 
 make -C "${kernel_root}" "${make_args[@]}" "${kernel_defconfig}"
 
-grep -q '^# CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE is not set$' \
+grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y$' \
 	"${build_output}/.config"
 
-make -C "${kernel_root}" -j"$(nproc)" "${make_args[@]}" Image.gz
+make -C "${kernel_root}" -j"$(nproc)" "${make_args[@]}" Image.gz-dtb
 
-kernel_image="${build_output}/arch/arm64/boot/Image.gz"
+kernel_image="${build_output}/arch/arm64/boot/Image.gz-dtb"
 test -s "${kernel_image}"
 grep -aFq "clang version ${clang_version}" "${build_output}/vmlinux"
 kernel_release="$(make -s -C "${kernel_root}" "${make_args[@]}" kernelrelease)"

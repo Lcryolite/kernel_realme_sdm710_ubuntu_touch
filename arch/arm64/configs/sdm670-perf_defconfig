@@ -72,7 +72,7 @@ CONFIG_PCI=y
 CONFIG_SCHED_MC=y
 CONFIG_NR_CPUS=8
 CONFIG_PREEMPT=y
-# Use bootloader DTB instead of wrong reference board DTB
+# Append the RMX1901 device tree for the Ubuntu Touch boot image
 CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y
 CONFIG_BUILD_ARM64_DT_OVERLAY=y
 CONFIG_HZ_100=y
