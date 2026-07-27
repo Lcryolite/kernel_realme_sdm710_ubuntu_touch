@@ -65,6 +65,7 @@ chmod +x "$fake_bin/make"
 test "$(grep -Fxc 'CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y' "$defconfig")" -eq 1
 test "$(grep -Fxc '# CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE is not set' "$defconfig")" -eq 0
 test "$(grep -Fxc 'CONFIG_LOCALVERSION="-RMX1901-Halium"' "$defconfig")" -eq 1
+test "$(grep -Fxc 'CONFIG_USB_CONFIGFS_RNDIS=y' "$defconfig")" -eq 1
 
 PATH="$fake_bin:$PATH" \
 	OUT_DIR="$build_output" \
