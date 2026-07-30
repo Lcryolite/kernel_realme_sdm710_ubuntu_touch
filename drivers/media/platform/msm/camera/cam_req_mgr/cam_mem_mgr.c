@@ -313,6 +313,11 @@ static int cam_mem_util_get_dma_buf(size_t len,
 		CAM_ERR(CAM_CRM, "Invalid params");
 		return -EINVAL;
 	}
+	/* Generic V4L2 discovery can precede CRM's driver-lifetime setup. */
+	if (!tbl.client || !tbl.bitmap || !tbl.bits) {
+		CAM_ERR(CAM_CRM, "memory manager is not ready");
+		return -EAGAIN;
+	}
 
 	*hdl = ion_alloc(tbl.client, len, align, heap_id_mask, flags);
 	if (IS_ERR_OR_NULL(*hdl))
@@ -345,6 +350,11 @@ static int cam_mem_util_get_dma_buf_fd(size_t len,
 	if (!hdl || !fd) {
 		CAM_ERR(CAM_CRM, "Invalid params");
 		return -EINVAL;
+	}
+	/* See cam_mem_util_get_dma_buf(): never dereference an unready table. */
+	if (!tbl.client || !tbl.bitmap || !tbl.bits) {
+		CAM_ERR(CAM_CRM, "memory manager is not ready");
+		return -EAGAIN;
 	}
 
 	*hdl = ion_alloc(tbl.client, len, align, heap_id_mask, flags);
@@ -798,9 +808,14 @@ static int cam_mem_mgr_cleanup_table(void)
 	return 0;
 }
 
-void cam_mem_mgr_deinit(void)
+void cam_mem_mgr_cleanup(void)
 {
 	cam_mem_mgr_cleanup_table();
+}
+
+void cam_mem_mgr_deinit(void)
+{
+	cam_mem_mgr_cleanup();
 	mutex_lock(&tbl.m_lock);
 	bitmap_zero(tbl.bitmap, tbl.bits);
 	kfree(tbl.bitmap);
