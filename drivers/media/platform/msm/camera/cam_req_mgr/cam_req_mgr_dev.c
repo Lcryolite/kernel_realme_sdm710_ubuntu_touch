@@ -139,19 +139,11 @@ static int cam_req_mgr_open(struct file *filep)
 	spin_unlock_bh(&g_dev.cam_eventq_lock);
 
 	g_dev.open_cnt++;
-	rc = cam_mem_mgr_init();
-	if (rc) {
-		g_dev.open_cnt--;
-		CAM_ERR(CAM_CRM, "mem mgr init failed");
-		goto mem_mgr_init_fail;
-	}
 
 	mutex_unlock(&g_dev.cam_lock);
 	cam_req_mgr_rwsem_write_op(CAM_SUBDEV_UNLOCK);
 	return rc;
 
-mem_mgr_init_fail:
-	v4l2_fh_release(filep);
 end:
 	mutex_unlock(&g_dev.cam_lock);
 	cam_req_mgr_rwsem_write_op(CAM_SUBDEV_UNLOCK);
@@ -199,7 +191,7 @@ static int cam_req_mgr_close(struct file *filep)
 	spin_unlock_bh(&g_dev.cam_eventq_lock);
 
 	cam_req_mgr_util_free_hdls();
-	cam_mem_mgr_deinit();
+	cam_mem_mgr_cleanup();
 	mutex_unlock(&g_dev.cam_lock);
 
 	cam_req_mgr_rwsem_write_op(CAM_SUBDEV_UNLOCK);

@@ -122,6 +122,14 @@ int cam_mem_mgr_cache_ops(struct cam_mem_cache_ops_cmd *cmd);
 int cam_mem_mgr_init(void);
 
 /**
+ * @brief: Releases allocations from a completed CRM session.
+ *
+ * The driver-lifetime ION client remains available to independently opened
+ * camera subdevices during generic V4L2 discovery.
+ */
+void cam_mem_mgr_cleanup(void);
+
+/**
  * @brief:  Tears down the memory manager
  *
  * @return None

@@ -288,8 +288,16 @@ struct fastrpc_glink_info {
 };
 
 struct fastrpc_dsp_capabilities {
-	uint32_t is_cached;	//! Flag if dsp attributes are cached
+	uint32_t is_cached;
 	uint32_t dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
+};
+
+struct fastrpc_dsp_capability_cache {
+	uint32_t is_cached;
+	uint32_t generation;
+	spinlock_t lock;
+	struct mutex fill_lock;
+	uint32_t dsp_attributes[FASTRPC_MAX_DSP_CAPABILITY_ATTRIBUTES];
 };
 
 struct fastrpc_channel_ctx {
@@ -317,6 +325,7 @@ struct fastrpc_channel_ctx {
 	/* Indicates, if channel is restricted to secure node only */
 	int secure;
 	struct fastrpc_dsp_capabilities dsp_cap_kernel;
+	struct fastrpc_dsp_capability_cache dsp_cap_cache;
 	/* Indicates whether the channel supports unsigned PD */
 	bool unsigned_support;
 };
@@ -2044,6 +2053,10 @@ static void fastrpc_init(struct fastrpc_apps *me)
 	for (i = 0; i < NUM_CHANNELS; i++) {
 		init_completion(&me->channel[i].work);
 		init_completion(&me->channel[i].workport);
+		spin_lock_init(&me->channel[i].dsp_cap_cache.lock);
+		mutex_init(&me->channel[i].dsp_cap_cache.fill_lock);
+		me->channel[i].dsp_cap_cache.is_cached = 0;
+		me->channel[i].dsp_cap_cache.generation = 0;
 		me->channel[i].sesscount = 0;
 		/* All channels are secure by default except CDSP */
 		me->channel[i].secure = SECURE_CHANNEL;
@@ -2552,13 +2565,8 @@ static int fastrpc_get_info_from_kernel(
 	uint32_t domain = dsp_cap->domain;
 
 	if (!gcinfo[domain].dsp_cap_kernel.is_cached) {
-		/*
-		 * Information not on kernel, query device for information
-		 * and cache on kernel
-		 */
 		err = fastrpc_get_info_from_dsp(fl, dsp_cap->dsp_attributes,
-				FASTRPC_MAX_DSP_ATTRIBUTES - 1,
-				domain);
+				FASTRPC_MAX_DSP_ATTRIBUTES - 1, domain);
 		if (err)
 			goto bail;
 
@@ -2577,25 +2585,74 @@ static int fastrpc_get_info_from_kernel(
 			break;
 		default:
 			err = -1;
-			/*
-			 * Reset is_cached flag to 0 so subsequent calls
-			 * can try to query dsp again
-			 */
 			gcinfo[domain].dsp_cap_kernel.is_cached = 0;
 			pr_warn("adsprpc: %s: %s: returned bad domain support value %d\n",
-					current->comm,
-					__func__,
-					domain_support);
+					current->comm, __func__, domain_support);
 			goto bail;
 		}
 		gcinfo[domain].dsp_cap_kernel.is_cached = 1;
 	} else {
-		// Information on Kernel, pass it to user
 		memcpy(dsp_cap->dsp_attributes,
 			&gcinfo[domain].dsp_cap_kernel.dsp_attributes,
 			sizeof(dsp_cap->dsp_attributes));
 	}
 bail:
+	return err;
+}
+
+static int fastrpc_get_dsp_capability_from_kernel(uint32_t domain,
+		uint32_t attribute_id, struct fastrpc_file *fl,
+		uint32_t *capability)
+{
+	struct fastrpc_dsp_capability_cache *cache;
+	uint32_t *attributes = NULL;
+	uint32_t generation;
+	unsigned long flags;
+	int err = 0;
+
+	if (domain >= NUM_CHANNELS)
+		return -ECHRNG;
+	if (!fl || fl->cid != domain)
+		return -EINVAL;
+	cache = &gcinfo[domain].dsp_cap_cache;
+	mutex_lock(&cache->fill_lock);
+	spin_lock_irqsave(&cache->lock, flags);
+	if (cache->is_cached) {
+		*capability = cache->dsp_attributes[attribute_id];
+		spin_unlock_irqrestore(&cache->lock, flags);
+		goto bail;
+	}
+	generation = cache->generation;
+	spin_unlock_irqrestore(&cache->lock, flags);
+
+	attributes = kcalloc(FASTRPC_MAX_DSP_CAPABILITY_ATTRIBUTES,
+			sizeof(*attributes), GFP_KERNEL);
+	if (!attributes) {
+		err = -ENOMEM;
+		goto bail;
+	}
+	err = fastrpc_get_info_from_dsp(fl, attributes,
+			FASTRPC_MAX_DSP_CAPABILITY_ATTRIBUTES - 1, domain);
+	if (err)
+		goto bail;
+	if (attributes[0] != 1) {
+		err = -EINVAL;
+		goto bail;
+	}
+
+	spin_lock_irqsave(&cache->lock, flags);
+	if (generation != cache->generation) {
+		err = -EAGAIN;
+	} else {
+		memcpy(cache->dsp_attributes, attributes,
+			sizeof(cache->dsp_attributes));
+		cache->is_cached = 1;
+		*capability = cache->dsp_attributes[attribute_id];
+	}
+	spin_unlock_irqrestore(&cache->lock, flags);
+bail:
+	kfree(attributes);
+	mutex_unlock(&cache->fill_lock);
 	return err;
 }
 
@@ -3969,6 +4026,47 @@ bail:
 	return err;
 }
 
+/*
+ * API30 userspace queries one capability at a time with ioctl command 17.
+ * Keep command 16 and its seven-element payload unchanged for older clients.
+ */
+static int fastrpc_get_dsp_capability(
+		struct fastrpc_ioctl_capability *cap,
+		void *param, struct fastrpc_file *fl)
+{
+	static const uint32_t kernel_capabilities[] = {
+		(1U << 1), /* performance capability */
+		1U,        /* performance logging v2 */
+	};
+	uint32_t attribute_id;
+	int err = 0;
+
+	K_COPY_FROM_USER(err, 0, cap, param, sizeof(*cap));
+	if (err)
+		return -EFAULT;
+	if (cap->domain >= NUM_CHANNELS)
+		return -ECHRNG;
+	if (!fl || fl->cid != cap->domain)
+		return -EINVAL;
+	attribute_id = cap->attribute_ID;
+	if (attribute_id >= FASTRPC_MAX_CAPABILITY_ATTRIBUTES)
+		return -EOVERFLOW;
+
+	if (attribute_id >= FASTRPC_MAX_DSP_CAPABILITY_ATTRIBUTES) {
+		cap->capability = kernel_capabilities[attribute_id -
+			FASTRPC_MAX_DSP_CAPABILITY_ATTRIBUTES];
+	} else {
+		err = fastrpc_get_dsp_capability_from_kernel(cap->domain,
+				attribute_id, fl, &cap->capability);
+		if (err)
+			return err;
+	}
+
+	K_COPY_TO_USER(err, 0, &((struct fastrpc_ioctl_capability *)
+		param)->capability, &cap->capability, sizeof(cap->capability));
+	return err ? -EFAULT : 0;
+}
+
 static int fastrpc_update_cdsp_support(struct fastrpc_file *fl)
 {
 	struct fastrpc_ioctl_dsp_capabilities *dsp_query;
@@ -4004,6 +4102,7 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int ioctl_num,
 		struct fastrpc_ioctl_perf perf;
 		struct fastrpc_ioctl_control cp;
 		struct fastrpc_ioctl_dsp_capabilities dsp_cap;
+		struct fastrpc_ioctl_capability cap;
 	} p;
 	union {
 		struct fastrpc_ioctl_mmap mmap;
@@ -4223,6 +4322,9 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int ioctl_num,
 	case FASTRPC_IOCTL_GET_DSP_INFO:
 		err = fastrpc_get_dsp_info(&p.dsp_cap, param, fl);
 		break;
+	case FASTRPC_IOCTL_GET_DSP_CAPABILITY:
+		err = fastrpc_get_dsp_capability(&p.cap, param, fl);
+		break;
 	default:
 		err = -ENOTTY;
 		pr_info("bad ioctl: %d\n", ioctl_num);
@@ -4247,6 +4349,16 @@ static int fastrpc_restart_notifier_cb(struct notifier_block *nb,
 		mutex_lock(&me->smd_mutex);
 		ctx->ssrcount++;
 		ctx->issubsystemup = 0;
+		{
+			unsigned long flags;
+
+			spin_lock_irqsave(&ctx->dsp_cap_cache.lock, flags);
+			ctx->dsp_cap_cache.is_cached = 0;
+			ctx->dsp_cap_cache.generation++;
+			memset(ctx->dsp_cap_cache.dsp_attributes, 0,
+				sizeof(ctx->dsp_cap_cache.dsp_attributes));
+			spin_unlock_irqrestore(&ctx->dsp_cap_cache.lock, flags);
+		}
 		if (ctx->chan) {
 			if (me->glink)
 				fastrpc_glink_close(ctx->chan, cid);

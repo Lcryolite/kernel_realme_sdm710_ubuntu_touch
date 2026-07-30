@@ -45,6 +45,8 @@
 		_IOWR('R', 15, struct compat_fastrpc_ioctl_munmap_64)
 #define COMPAT_FASTRPC_IOCTL_GET_DSP_INFO \
 		_IOWR('R', 16, struct compat_fastrpc_ioctl_dsp_capabilities)
+#define COMPAT_FASTRPC_IOCTL_GET_DSP_CAPABILITY \
+		_IOWR('R', 17, struct compat_fastrpc_ioctl_capability)
 
 struct compat_remote_buf {
 	compat_uptr_t pv;	/* buffer pointer */
@@ -156,6 +158,12 @@ struct compat_fastrpc_ioctl_control {
 struct compat_fastrpc_ioctl_dsp_capabilities {
 	compat_uint_t domain;	/* DSP domain to query capabilities */
 	compat_uint_t dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
+};
+
+struct compat_fastrpc_ioctl_capability {
+	compat_uint_t domain;
+	compat_uint_t attribute_ID;
+	compat_uint_t capability;
 };
 
 static int compat_get_fastrpc_ioctl_invoke(
@@ -443,6 +451,38 @@ static int compat_fastrpc_get_dsp_info(struct file *filp,
 	return err;
 }
 
+static int compat_fastrpc_get_dsp_capability(struct file *filp,
+		unsigned long arg)
+{
+	struct compat_fastrpc_ioctl_capability __user *cap32;
+	struct fastrpc_ioctl_capability __user *cap;
+	compat_uint_t value;
+	long ret;
+	int err = 0;
+
+	cap32 = compat_ptr(arg);
+	cap = compat_alloc_user_space(sizeof(*cap));
+	if (!cap)
+		return -EFAULT;
+
+	err = get_user(value, &cap32->domain);
+	err |= put_user(value, &cap->domain);
+	err |= get_user(value, &cap32->attribute_ID);
+	err |= put_user(value, &cap->attribute_ID);
+	if (err)
+		return -EFAULT;
+
+	ret = filp->f_op->unlocked_ioctl(filp,
+			FASTRPC_IOCTL_GET_DSP_CAPABILITY,
+			(unsigned long)cap);
+	if (ret)
+		return ret;
+
+	err = get_user(value, &cap->capability);
+	err |= put_user(value, &cap32->capability);
+	return err ? -EFAULT : 0;
+}
+
 long compat_fastrpc_device_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg)
 {
@@ -644,6 +684,8 @@ long compat_fastrpc_device_ioctl(struct file *filp, unsigned int cmd,
 	}
 	case COMPAT_FASTRPC_IOCTL_GET_DSP_INFO:
 		return compat_fastrpc_get_dsp_info(filp, arg);
+	case COMPAT_FASTRPC_IOCTL_GET_DSP_CAPABILITY:
+		return compat_fastrpc_get_dsp_capability(filp, arg);
 	default:
 		return -ENOIOCTLCMD;
 	}

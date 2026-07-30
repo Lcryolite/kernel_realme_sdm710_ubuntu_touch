@@ -34,6 +34,13 @@
 #define FASTRPC_IOCTL_MUNMAP_FD _IOWR('R', 13, struct fastrpc_ioctl_munmap_fd)
 #define FASTRPC_IOCTL_GET_DSP_INFO \
 			_IOWR('R', 16, struct fastrpc_ioctl_dsp_capabilities)
+/*
+ * API30 vendor source names command 17 FASTRPC_IOCTL_GET_DSP_INFO. Keep the
+ * capability suffix here because this older tree already assigns that name to
+ * command 16; both numeric ABIs remain available.
+ */
+#define FASTRPC_IOCTL_GET_DSP_CAPABILITY \
+			_IOWR('R', 17, struct fastrpc_ioctl_capability)
 
 #define FASTRPC_GLINK_GUID "fastrpcglink-apps-dsp"
 #define FASTRPC_SMD_GUID "fastrpcsmd-apps-dsp"
@@ -275,6 +282,15 @@ struct fastrpc_ioctl_control {
 struct fastrpc_ioctl_dsp_capabilities {
 	uint32_t domain;	//! DSP domain to query capabilities
 	uint32_t dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
+};
+
+#define FASTRPC_MAX_DSP_CAPABILITY_ATTRIBUTES	(256)
+#define FASTRPC_MAX_CAPABILITY_ATTRIBUTES	(258)
+
+struct fastrpc_ioctl_capability {
+	uint32_t domain;
+	uint32_t attribute_ID;
+	uint32_t capability;
 };
 
 struct smq_null_invoke {
